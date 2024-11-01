@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Event Log</title>
+
+    <script>
+        function trigger(doc) {
+            let loc = doc.parentElement;
+            if(loc.classList.contains("open")) {
+                loc.classList.remove("open");
+            }else {
+                loc.classList.add("open");
+            }
+        }
+        function filter(type, cmd, r) {
+            const value = document.getElementsByClassName("event-search")[0].value;
+            const t = (value.split("#")[0].toLowerCase()).split(":")[0];
+            const c = (value.split("#")[0].toLowerCase()).split(":")[1];
+            const q = value.split("#")[1] ?? "";
+            const qs = q.split("&");
+            if(value.includes(":")) {
+                if(t === type) {
+                    if(cmd.startsWith(c)) {
+                        if(q) {
+                            for(const s of qs) {
+                                if(s.split("=").length === 2) {
+                                    if (r[s.split("=")[0]] === undefined || r[s.split("=")[0]].toString() !== s.split("=")[1]) {
+                                        return false;
+                                    }
+                                }
+                            }
+                        }
+                        return true;
+                    }
+                }
+            }else {
+                if(type.startsWith(t)) {
+                    if(q) {
+                        for(const s of qs) {
+                            if(s.split("=").length === 2) {
+                                if (r[s.split("=")[0]] === undefined || r[s.split("=")[0]].toString() !== s.split("=")[1]) {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                    return true;
+                }
+            }
+            return false;
+        }
+        function maxCount() {
+            let max = Number.parseInt(document.getElementsByClassName("event-max")[0].value);
+            if(max < 0 || Number.isNaN(max)) return 25;
+            return max - 1;
+        }
+        let elements = [];
+        function updateSelection() {
+            const e = document.getElementsByClassName("events")[0];
+            let content = "";
+            let addCount = maxCount();
+            for(const entry of [...elements].reverse()) {
+                const name = `${entry.type}:${entry.command}`;
+                const date = new Date(entry.at);
+                const dat = `${(date.getDate()).toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}`
+                const jsonObject = convertJson(entry, 0);
+
+                if(filter(entry.type, entry.command, entry)) {
+                    if (addCount < 0) {
+                        break;
+                    }
+
+                    content +=
+                        `<!--REM--><div class="event-entry">
+    <div onclick="trigger(this)" class="event-topbar"><span class="event-title">${name}</span><div><span class="event-time"><span class="json-key">At </span>${dat}</span><button class="event-icon"></button></div></div>
+    <div class="event-data"><hr>
+    <pre><code>${jsonObject}</code></pre>
+    </div>
+    </div>`;
+                    addCount--;
+                }
+            }
+            e.innerHTML = content;
+        }
+
+        function convertJson(json, indent) {
+            if (Array.isArray(json)) {
+                let genJson = "[\n";
+                indent += 4;
+                for (const element of json) {
+                    genJson += " ".repeat(indent) + convertJson(element, indent) + "\n";
+                }
+                indent -= 4;
+                return genJson + " ".repeat(indent) + "]";
+            } else if (typeof json === 'number') {
+                return '<span class="json-number">' + json + '</span>';
+            } else if (typeof json === 'string') {
+                return '<span class="json-string">' + `"${json}"`.replace(/&/g, '&amp').replace(/</g, '&lt').replace(/>/g, '&gt;').replace(/'/g, '&#39;').replace(/"/g, '&quot;') + '</span>';
+            } else if (typeof json === 'boolean') {
+                return '<span class="json-boolean">' + json + '</span>';
+            } else {
+                let genJson = "{\n";
+                indent += 4;
+                for (const [k, v] of Object.entries(json)) {
+                    genJson += " ".repeat(indent) + '<span class="json-key">"' + k.replace(/&/g, '&amp').replace(/</g, '&lt').replace(/>/g, '&gt;').replace(/'/g, '&#39;').replace(/"/g, '&quot;') + '"</span>: ';
+                    if (k === 'at') {
+                        genJson += '<span class="json-time">' + v + '</span>';
+                    } else {
+                        genJson += convertJson(v, indent);
+                    }
+                    genJson += "\n";
+                }
+                indent -= 4;
+                return genJson + " ".repeat(indent) + "}";
+            }
+        }
+
+        function connect() {
+            let ws = new WebSocket("wss://simplyreact.epicpix.dev/api/eventlog");
+            ws.onmessage = (m) => {
+                const message = JSON.parse(m.data);
+                const type = message.type;
+                const elms = message.elements;
+                if(type === "+") {
+                    elements.push(...elms);
+                }else if(type === "-") {
+                    elements.unshift(...elms);
+                }else if(type === "=") {
+                    updateSelection();
+                }
+                if(type === '+') {
+                    const e = document.getElementsByClassName("events")[0];
+                    let content = e.innerHTML;
+                    let addCount = Math.min(maxCount() - e.children.length, maxCount());
+                    for(const entry of elms) {
+                        const name = `${entry.type}:${entry.command}`;
+                        const date = new Date(entry.at);
+                        const dat = `${(date.getDate()).toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}`
+                        const jsonObject = convertJson(entry, 0);
+
+                        if(filter(entry.type, entry.command, entry)) {
+                            if (addCount < 0) {
+                                content = content.substring(0, content.lastIndexOf("<!--REM-->"));
+                            }
+
+                            content =
+                            `<!--REM--><div class="event-entry">
+<div onclick="trigger(this)" class="event-topbar"><span class="event-title">${name}</span><div><span class="event-time"><span class="json-key">At </span>${dat}</span><button class="event-icon"></button></div></div>
+<div class="event-data"><hr>
+<pre><code>${jsonObject}</code></pre>
+</div>
+</div>` + content;
+                            addCount--;
+                        }
+                    }
+                    e.innerHTML = content;
+                }
+            }
+            let keepAlive = setInterval(() => {
+                ws.send('{"op":"keep_alive"}');
+            }, 30000)
+            ws.onclose = () => {
+                clearInterval(keepAlive);
+                setTimeout(() => {
+                    elements = [];
+                    document.getElementsByClassName("events")[0].innerHTML = "";
+                    connect();
+                }, 20000);
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: rgb(25, 27, 30);
+            color: rgb(230, 230, 230);
+        }
+        .event-title {
+            margin-left: 20px;
+            font-size: 20px;
+            font-family: monospace;
+        }
+        .event-icon {
+            width: 20px;
+            height: 20px;
+            border: none;
+            background-color: #00000000;
+            background-image: url(/static/triangle.svg);
+            background-size: 20px;
+            margin-right: 15px;
+            transition-duration: 0.05s;
+        }
+        .event-entry.open>.event-topbar>div>.event-icon {
+            rotate: 90deg;
+        }
+        .event-topbar {
+            width: auto;
+            height: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .event-entry {
+            background-color: rgb(48, 51, 55);
+            width: 600px;
+            max-height: 30px;
+            margin-bottom: 20px;
+            overflow: hidden;
+            transition: max-height 0.05s linear;
+        }
+        .event-data {
+            margin: 10px 20px;
+        }
+        .event-entry.open {
+            max-height: 250px;
+        }
+        .events {
+            display: table;
+            margin: 50px auto 0;
+        }
+        .json-key {
+            color: rgb(250, 170, 60)
+        }
+        .json-time {
+            color: rgb(100, 200, 250)
+        }
+        .json-string {
+            color: rgb(100, 250, 200)
+        }
+        .json-number {
+            color: rgb(60, 250, 120)
+        }
+        .json-boolean {
+            color: #17d36f;
+        }
+        .event-time {
+            color: rgb(100, 200, 250);
+            font-family: monospace;
+            padding-right: 10px;
+            position: relative;
+            top: 2px;
+        }
+        #header {
+            display: table;
+            margin: 40px auto 0;
+        }
+        .event-search {
+            width: 550px;
+            height: 35px;
+            background-color: rgb(48, 51, 55);
+            color: rgb(230, 230, 230);
+            border: 0;
+            font-family: monospace;
+            font-size: 20px;
+        }
+        .event-max {
+            width: 55px;
+            height: 35px;
+            background-color: rgb(48, 51, 55);
+            color: rgb(230, 230, 230);
+            border: 0;
+            font-family: monospace;
+            font-size: 20px;
+        }
+    </style>
+</head>
+<body onload="connect()">
+<div id="header">
+<input class="event-search" oninput="updateSelection(this.value)" placeholder="type[:command][#params]" autocomplete="off"/>
+<input class="event-max" oninput="updateSelection(this.value)" value="100" placeholder="max" autocomplete="off"/>
+</div>
+<div class="events"></div>
+</body>
+</html>
